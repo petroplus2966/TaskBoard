@@ -1,16 +1,176 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>Petro Plus Task Board</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Petro Plus – Task Board</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { margin: 0; background: #0b0f14; color: #e8eef6; }
+    header { padding: 16px 18px; border-bottom: 1px solid rgba(255,255,255,.08); display:flex; gap:12px; align-items:center; justify-content:space-between; }
+    header h1 { margin: 0; font-size: 18px; font-weight: 700; letter-spacing:.3px; }
+    .meta { opacity:.8; font-size: 13px; }
+    .wrap { padding: 14px; }
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .col { background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); border-radius: 14px; overflow:hidden; }
+    .col h2 { margin:0; padding: 12px 14px; font-size: 14px; letter-spacing:.4px; background: rgba(255,255,255,.04); border-bottom:1px solid rgba(255,255,255,.08); }
+    .list { padding: 10px; display:flex; flex-direction:column; gap:10px; min-height: 70vh; }
+    .card { background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.10); border-radius: 12px; padding: 10px 12px; }
+    .top { display:flex; justify-content:space-between; gap: 10px; align-items:flex-start; }
+    .title { font-weight: 700; font-size: 14px; margin:0 0 6px 0; }
+    .pill { font-size: 12px; padding: 4px 8px; border-radius: 999px; background: rgba(0,0,0,.25); border:1px solid rgba(255,255,255,.10); white-space:nowrap; }
+    .sub { font-size: 12px; opacity:.85; line-height: 1.35; }
+    .warn { color: #ffcc66; }
+    .bad  { color: #ff7a7a; }
+    .ok   { color: #86efac; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; margin-top: 8px; opacity:.9; font-size: 12px; }
+    .tiny { opacity:.75; font-size: 12px; }
+    .btn { cursor:pointer; border-radius: 10px; padding: 8px 10px; border:1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.06); color:#e8eef6; }
+    .btn:hover { background: rgba(255,255,255,.10); }
+    @media (max-width: 900px){ .grid{ grid-template-columns: 1fr; } .list{ min-height:auto; } }
+  </style>
 </head>
 <body>
+  <header>
+    <div>
+      <h1>Petro Plus – Task Board</h1>
+      <div class="meta" id="meta">Loading…</div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center;">
+      <button class="btn" id="refreshBtn">Refresh</button>
+      <div class="tiny">Source: <code>tasks.json</code></div>
+    </div>
+  </header>
 
-    <h1>PREP TASK BOARD</h1>
+  <div class="wrap">
+    <div class="grid">
+      <section class="col">
+        <h2>TO DO</h2>
+        <div class="list" id="todo"></div>
+      </section>
 
-    <div id="tasks"></div>
+      <section class="col">
+        <h2>DONE</h2>
+        <div class="list" id="done"></div>
+      </section>
+    </div>
+  </div>
 
-    <script src="script.js"></script>
+<script>
+  const metaEl = document.getElementById('meta');
+  const todoEl = document.getElementById('todo');
+  const doneEl = document.getElementById('done');
+  const refreshBtn = document.getElementById('refreshBtn');
+
+  function el(tag, cls, text){
+    const x = document.createElement(tag);
+    if (cls) x.className = cls;
+    if (text !== undefined) x.textContent = text;
+    return x;
+  }
+
+  function fmtDT(s){
+    if(!s) return '';
+    // Expecting yyyy-mm-ddTHH:MM:SS (from VBA)
+    const d = new Date(s);
+    if (isNaN(d)) return s;
+    return d.toLocaleString();
+  }
+
+  function todayISO(){
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function normalizeBool(v){
+    if (v === true) return true;
+    if (v === false) return false;
+    if (typeof v === 'string') return v.trim().toLowerCase() === 'true';
+    return false;
+  }
+
+  function card(task){
+    const wrap = el('div','card');
+
+    const top = el('div','top');
+    const left = el('div');
+    left.appendChild(el('div','title', task.Item ? `${task.Item} — ${task.Qty ?? ''} ${task.UnitType ?? ''}` : (task.TaskText || 'Task')));
+    left.appendChild(el('div','sub', task.TaskText || ''));
+    top.appendChild(left);
+
+    const pillText = task.DueTime ? `Due: ${fmtDT(task.DueTime)}` : 'No due time';
+    const pill = el('div','pill', pillText);
+    top.appendChild(pill);
+
+    wrap.appendChild(top);
+
+    const row = el('div','row');
+    if (task.Station) row.appendChild(el('span','tiny', `Station: ${task.Station}`));
+    if (task.AssignedTo) row.appendChild(el('span','tiny', `Assigned: ${task.AssignedTo}`));
+    if (task.ShiftType || task["Shift Type"]) row.appendChild(el('span','tiny', `Shift: ${task.ShiftType || task["Shift Type"]}`));
+    wrap.appendChild(row);
+
+    // Flags
+    const overdue = normalizeBool(task.IsOverdue);
+    const dueMissing = normalizeBool(task.DueTimeMissing);
+
+    if (overdue) wrap.appendChild(el('div','sub bad', '⚠ Overdue'));
+    else if (dueMissing) wrap.appendChild(el('div','sub warn', '⏳ Missing/invalid DueTime'));
+    else wrap.appendChild(el('div','sub ok', '✓ On track'));
+
+    return wrap;
+  }
+
+  async function load(){
+    todoEl.innerHTML = '';
+    doneEl.innerHTML = '';
+    metaEl.textContent = 'Loading…';
+
+    // Cache-bust so refresh actually pulls new JSON
+    const res = await fetch(`tasks.json?ts=${Date.now()}`);
+    if(!res.ok){
+      metaEl.textContent = `Could not load tasks.json (HTTP ${res.status}). Make sure tasks.json is in the repo root.`;
+      return;
+    }
+
+    let tasks = await res.json();
+
+    // ONLY TODAY (based on Date column if present)
+    const t = todayISO();
+    tasks = tasks.filter(x => {
+      const d = (x.Date || '').toString().slice(0,10);
+      return d ? d === t : true; // if Date missing, keep it
+    });
+
+    // Sort by DueTime then CreatedAt
+    tasks.sort((a,b)=>{
+      const ad = new Date(a.DueTime || '9999-12-31T23:59:59');
+      const bd = new Date(b.DueTime || '9999-12-31T23:59:59');
+      if(ad-bd !== 0) return ad-bd;
+      const ac = new Date(a.CreatedAt || '9999-12-31T23:59:59');
+      const bc = new Date(b.CreatedAt || '9999-12-31T23:59:59');
+      return ac-bc;
+    });
+
+    let todo = 0, done = 0;
+    for(const task of tasks){
+      const status = (task.Status || '').toString().trim().toLowerCase();
+      if(status === 'done'){
+        doneEl.appendChild(card(task)); done++;
+      } else {
+        todoEl.appendChild(card(task)); todo++;
+      }
+    }
+
+    metaEl.textContent = `${t} — To Do: ${todo} | Done: ${done} | Last loaded: ${new Date().toLocaleTimeString()}`;
+  }
+
+  refreshBtn.addEventListener('click', load);
+  load();
+  setInterval(load, 30000); // auto refresh every 30s
+</script>
 </body>
 </html>
